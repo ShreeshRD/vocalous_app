@@ -10,13 +10,23 @@ export default [
     output: [
       {
         file: 'public/pitch-detection/worker.js',
-        format: 'cjs',
+        format: 'iife',
       },
     ],
     plugins: [
       resolve(),
-      typescript({ target: 'es5', declaration: false }),
-      getBabelOutputPlugin({ presets: ['@babel/preset-env'] }),
+      typescript({
+        tsconfig: false,
+        include: ['worker/**/*'],
+        compilerOptions: {
+          target: 'ES2020',
+          module: 'ESNext',
+          moduleResolution: 'bundler',
+          declaration: false,
+          skipLibCheck: true,
+        }
+      }),
+      // getBabelOutputPlugin removed
       copy({
         targets: [
           { src: '../wasm/pkg/**.wasm', dest: 'public/pitch-detection' },

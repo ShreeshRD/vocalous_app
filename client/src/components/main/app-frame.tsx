@@ -10,7 +10,7 @@ const readMelodyNotes = () => {
     try {
       return decodeS1(params.s1);
     } catch (error) {
-      alert(error.toString());
+      alert((error as any).toString());
     }
   }
 };

@@ -3,7 +3,7 @@ import init, {
   McLeodDetector,
 } from 'pitch-detection-wasm';
 import { WorkerMessenger, ChildHandshake } from 'post-me';
-import 'regenerator-runtime';
+// import 'regenerator-runtime';
 
 import { WorkerMethods } from './types';
 

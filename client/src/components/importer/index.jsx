@@ -105,21 +105,18 @@ function FileForm({ onComplete }) {
           onChange={(evt) => setTitle(evt.target.value)}
         />
       </Form.Group>
-      <Form.Group controlId="import-file-group">
-        <Form.File id="import-file" custom>
-          <Form.File.Input
-            accept=".txt"
-            isInvalid={!!fileError}
-            onChange={handleFileChange}
-            required
-          />
-          <Form.File.Label>
-            {t('CREATE.SONG.ULTRASTAR_TXT_FILE.LABEL')}
-          </Form.File.Label>
-          <Form.Control.Feedback type="invalid">
-            {t('CREATE.SONG.ULTRASTAR_TXT_FILE.INVALID')}
-          </Form.Control.Feedback>
-        </Form.File>
+      <Form.Group controlId="import-file" className="mb-3">
+        <Form.Label>{t('CREATE.SONG.ULTRASTAR_TXT_FILE.LABEL')}</Form.Label>
+        <Form.Control
+          type="file"
+          accept=".txt"
+          isInvalid={!!fileError}
+          onChange={handleFileChange}
+          required
+        />
+        <Form.Control.Feedback type="invalid">
+          {t('CREATE.SONG.ULTRASTAR_TXT_FILE.INVALID')}
+        </Form.Control.Feedback>
         <Form.Text className="text-muted">
           {t('CREATE.SONG.ULTRASTAR_TXT_FILE.HELP')}
         </Form.Text>

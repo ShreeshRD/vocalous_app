@@ -6,10 +6,11 @@ interface PitchSetup {
   analyser?: AnalyserNode;
   audioContext?: AudioContext;
   buffer?: Float32Array;
+  byteBuffer?: Uint8Array;
 }
 interface PitchProps {
   stream: MediaStream;
-  workerConnection: Connection<{}, WorkerMethods, {}>;
+  workerConnection: any;
   detectorName: 'autocorrelation' | 'mcleod';
   windowSize: number;
   powerThreshold: number;
@@ -22,7 +23,7 @@ interface PitchProps {
 }
 
 // Converts byte buffer to float buffer. Buffers must have same length.
-const convertByteToFloatBuffer = (byteBuf, floatBuf) => {
+const convertByteToFloatBuffer = (byteBuf: Uint8Array, floatBuf: Float32Array) => {
   for (let i = 0; i < byteBuf.length; i++) {
     floatBuf[i] = byteBuf[i] / 128 - 1;
   }
@@ -101,12 +102,14 @@ export function PitchMonitor({
         return;
       }
       if (analyser.getFloatTimeDomainData !== undefined) {
-        analyser.getFloatTimeDomainData(buffer);
+        analyser.getFloatTimeDomainData(buffer as any);
       } else {
         // Some browsers do not have AnalyserNode.getFloatTimeDomainData() yet,
         // so use getByteTimeDomainData method instead.
-        analyser.getByteTimeDomainData(byteBuffer);
-        convertByteToFloatBuffer(byteBuffer, buffer);
+        if (byteBuffer) {
+          analyser.getByteTimeDomainData(byteBuffer as any);
+          convertByteToFloatBuffer(byteBuffer as any, buffer);
+        }
       }
       const result = await workerConnection
         .remoteHandle()

@@ -58,7 +58,7 @@ function SongInfo() {
   const params = qs.parse(window.location.search.substr(1));
   const { author, lyrics, music, title } = params;
   const notes = useStoreState((state) => state.melody.notes);
-  if (!notes) {
+  if ((!notes || notes.length === 0) && !title && !author && !music && !lyrics) {
     return null;
   }
 

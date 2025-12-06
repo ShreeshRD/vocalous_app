@@ -26,7 +26,9 @@ export function parseUltraStarTxt(data) {
     } else if (key === 'gap') {
       gap = parseFloat(value.replace(',', '.'), 10);
     } else if (key === 'relative') {
-      throw new Error('Relative notes not supported!');
+      if (value.toLowerCase() === 'yes') {
+        throw new Error('Relative notes not supported!');
+      }
     }
   }
 

@@ -48,13 +48,16 @@ interface StoreModel {
   initializeStream: Thunk<StoreModel, void>;
   stopStream: Thunk<StoreModel, void>;
 
-  workerConnection: Connection | null | undefined;
-  setWorkerConnection: Action<StoreModel, Connection | null>;
+  workerConnection: any;
+  setWorkerConnection: Action<StoreModel, any>;
   initializeWorker: Thunk<StoreModel, void>;
+
+  checkAudioContextSupport: Thunk<StoreModel, void>;
+  setError: Action<StoreModel, ErrorType | null>;
 
   melody: Melody;
   setMelodyNotes: Action<StoreModel, IMelodyNotes>;
-  error: ErrorType;
+  error: ErrorType | null;
 }
 
 export const store = createStore<StoreModel>({
@@ -68,7 +71,7 @@ export const store = createStore<StoreModel>({
   stream: null,
   audioOptions: { audio: { echoCancellation: true, autoGainControl: true } },
   workerConnection: null,
-  melody: {},
+  melody: { title: '', notes: [] }, // Initial empty melody
   error: null,
 
   setWindowSize: action((state, payload) => {
@@ -140,7 +143,7 @@ export const store = createStore<StoreModel>({
   }),
   initializeWorker: thunk(async (actions) => {
     const worker = new Worker(
-      `${process.env.PUBLIC_URL}/pitch-detection/worker.js`
+      `${import.meta.env.BASE_URL}pitch-detection/worker.js`
     );
 
     const messenger = new WorkerMessenger({ worker });

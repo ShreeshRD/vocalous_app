@@ -13,11 +13,11 @@ import { BACKGROUND } from '../../constants/colors';
 import { useStoreActions, useStoreState } from '../../model';
 
 // Custom React hook for requestAnimationFrame
-const useAnimationFrame = (callback) => {
-  const requestRef = useRef();
+const useAnimationFrame = (callback: (time: number) => void) => {
+  const requestRef = useRef<number>();
 
   useEffect(() => {
-    const animate = (time) => {
+    const animate = (time: number) => {
       callback(time);
       requestRef.current = requestAnimationFrame(animate);
     };
@@ -25,7 +25,9 @@ const useAnimationFrame = (callback) => {
     requestRef.current = requestAnimationFrame(animate);
 
     return () => {
-      cancelAnimationFrame(requestRef.current);
+      if (requestRef.current) {
+        cancelAnimationFrame(requestRef.current);
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // run this effect only once
@@ -38,10 +40,10 @@ export interface PitchProps {
 
 function PitchComponent({ freq, clarity }: PitchProps) {
   const { t } = useTranslation();
-  const pitchDisplay = useRef();
+  const pitchDisplay = useRef<any>(undefined);
   const [inIntro, setInIntro] = useState(false);
 
-  const updatePitch = useCallback(() => {
+  const updatePitch = useCallback((time?: number) => {
     if (!pitchDisplay.current) {
       return;
     }
@@ -76,10 +78,10 @@ function PitchComponent({ freq, clarity }: PitchProps) {
   }, []);
 
   const notes = useStoreState((state) => state.melody.notes);
-  const hasNotes = notes && notes.notes && notes.notes.length;
+  const hasNotes = notes && notes.length;
   useEffect(() => {
-    if (pitchDisplay.current && notes && notes.notes) {
-      pitchDisplay.current.setMelodyNotes(notes.notes);
+    if (pitchDisplay.current && notes) {
+      pitchDisplay.current.setMelodyNotes(notes);
     }
   }, [notes]);
 
@@ -90,7 +92,7 @@ function PitchComponent({ freq, clarity }: PitchProps) {
   const btnColorPressed = '#a6a8aa';
 
   const onDisplayRef = useCallback(
-    (element) => {
+    (element: HTMLDivElement | null) => {
       if (element && !pitchDisplay.current) {
         pitchDisplay.current = new PitchDisplay(element, 6000);
         pitchDisplay.current.setBackgroundColor(BACKGROUND);
@@ -105,7 +107,7 @@ function PitchComponent({ freq, clarity }: PitchProps) {
 
   useEffect(() => {
     if (pitchDisplay.current) {
-      return pitchDisplay.current.subscribeToIntroState((val) =>
+      return pitchDisplay.current.subscribeToIntroState((val: boolean) =>
         setInIntro(val)
       );
     }
@@ -121,8 +123,8 @@ function PitchComponent({ freq, clarity }: PitchProps) {
   const skipIntroBody = t('SKIP.BODY');
   const skipIntroPopover = (
     <Popover id="popover-skip-intro" className="unselectable">
-      <Popover.Title as="h3">{skipIntroTitle}</Popover.Title>
-      <Popover.Content>{skipIntroBody}</Popover.Content>
+      <Popover.Header as="h3">{skipIntroTitle}</Popover.Header>
+      <Popover.Body>{skipIntroBody}</Popover.Body>
     </Popover>
   );
 
@@ -142,9 +144,9 @@ function PitchComponent({ freq, clarity }: PitchProps) {
             overlay={skipIntroPopover}
           >
             <SkipStartButton
-              onPress={() => pitchDisplay.current.seekToFirstNote()}
-              onRelease={() => pitchDisplay.current.playSong()}
-              onCancel={() => pitchDisplay.current.playSong()}
+              onPress={() => pitchDisplay.current?.seekToFirstNote()}
+              onRelease={() => pitchDisplay.current?.playSong()}
+              onCancel={() => pitchDisplay.current?.playSong()}
               className="btn-skip-start"
               size={btnSize}
               color={btnColor}
@@ -155,9 +157,9 @@ function PitchComponent({ freq, clarity }: PitchProps) {
         )}
         {hasNotes && (
           <PauseButton
-            onPress={() => pitchDisplay.current.pauseSong()}
-            onRelease={() => pitchDisplay.current.playSong()}
-            onCancel={() => pitchDisplay.current.playSong()}
+            onPress={() => pitchDisplay.current?.pauseSong()}
+            onRelease={() => pitchDisplay.current?.playSong()}
+            onCancel={() => pitchDisplay.current?.playSong()}
             className="btn-pause"
             size={btnSize}
             color={btnColor}
@@ -173,8 +175,8 @@ function PitchComponent({ freq, clarity }: PitchProps) {
         />
         {hasNotes && (
           <ForwardButton
-            onPress={() => pitchDisplay.current.fastForwardSong()}
-            onRelease={() => pitchDisplay.current.playSong()}
+            onPress={() => pitchDisplay.current?.fastForwardSong()}
+            onRelease={() => pitchDisplay.current?.playSong()}
             className="btn-forward"
             size={btnSize}
             color={btnColor}
