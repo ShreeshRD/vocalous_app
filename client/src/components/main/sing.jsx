@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { Button, Container, Col, Row } from 'react-bootstrap';
 import { PlayCircleFill } from 'react-bootstrap-icons';
 import qs from 'qs';
-import MetaTags from 'react-meta-tags';
 import { useTranslation } from 'react-i18next';
 
 import ErrorModal from '../error-modal';
@@ -58,21 +57,44 @@ function SongInfo() {
   const params = qs.parse(window.location.search.substr(1));
   const { author, lyrics, music, title } = params;
   const notes = useStoreState((state) => state.melody.notes);
+
+  const newTitle = title ? `${title} – Vocalous` : undefined;
+
+  useEffect(() => {
+    if (newTitle) {
+      const originalTitle = document.title;
+      document.title = newTitle;
+
+      let meta = document.querySelector('meta[property="og:title"]');
+      let created = false;
+      if (!meta) {
+        meta = document.createElement('meta');
+        meta.setAttribute('property', 'og:title');
+        document.head.appendChild(meta);
+        created = true;
+      }
+      const originalMetaContent = meta.getAttribute('content');
+      meta.setAttribute('content', newTitle);
+
+      return () => {
+        document.title = originalTitle;
+        if (created) {
+          meta.remove();
+        } else if (originalMetaContent !== null) {
+          meta.setAttribute('content', originalMetaContent);
+        } else {
+          meta.removeAttribute('content');
+        }
+      };
+    }
+  }, [newTitle]);
+
   if ((!notes || notes.length === 0) && !title && !author && !music && !lyrics) {
     return null;
   }
 
-  // Use MetaTags to dynamically change meta tags in <head>,
-  // they are read by crawlers and social media preview fetchers
-  const newTitle = title ? `${title} – Vocalous` : undefined;
   return (
     <div className="song-info">
-      {newTitle && (
-        <MetaTags id={title.replace(/[\W_]+/g, 'x')}>
-          <title>{newTitle}</title>
-          <meta property="og:title" content={newTitle} />
-        </MetaTags>
-      )}
       <Container>
         <Row>
           <Col>
