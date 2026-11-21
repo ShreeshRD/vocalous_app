@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Build the Vocalous stack (wasm -> display -> client) and serve it on localhost.
+set -euo pipefail
+
+cd "$(dirname "$0")"
+
+PORT=3000
+
+echo "==> Building wasm package (wasm/pkg)"
+(cd wasm && wasm-pack build --target web)
+
+echo "==> Building display package (display/dist)"
+if [ ! -d display/node_modules ] || [ display/package.json -nt display/node_modules ]; then
+    (cd display && npm install)
+fi
+(cd display && npm run build)
+
+echo "==> Installing client dependencies"
+if [ ! -d client/node_modules ] || [ client/package.json -nt client/node_modules ]; then
+    (cd client && npm install)
+fi
+
+echo "==> Starting dev server on http://localhost:${PORT}/app/"
+(cd client && npm run start)

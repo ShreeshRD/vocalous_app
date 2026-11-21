@@ -21,6 +21,7 @@ pub struct AutocorrelationDetector {
 #[wasm_bindgen]
 impl AutocorrelationDetector {
     pub fn new(size: usize, padding: usize) -> Self {
+        utils::set_panic_hook();
         let wrapped = AutocorrelationDetectorInternal::<f32>::new(size, padding);
         AutocorrelationDetector{
             wrapped
@@ -41,6 +42,7 @@ pub struct McLeodDetector {
 #[wasm_bindgen]
 impl McLeodDetector {
     pub fn new(size: usize, padding: usize) -> Self {
+        utils::set_panic_hook();
         let wrapped = McLeodDetectorInternal::<f32>::new(size, padding);
         McLeodDetector{
             wrapped
