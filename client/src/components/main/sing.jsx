@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 
 import ErrorModal from '../error-modal';
 import { useStoreActions, useStoreState } from '../../model';
+import { SelectMicPreset, SelectWindowSize, SelectDetector, SelectClarityThreshold } from './options';
 
 function StartButton() {
   const [active, setActive] = useState(false);
@@ -143,6 +144,32 @@ export default function Sing() {
     <>
       <SongInfo />
       <Container>
+        <Row className="mb-3 justify-content-center text-center">
+          <Col xs="auto">
+            <div className="setting">
+              <span>Mic</span>
+              <SelectMicPreset />
+            </div>
+          </Col>
+          <Col xs="auto">
+            <div className="setting">
+              <span>Window</span>
+              <SelectWindowSize />
+            </div>
+          </Col>
+          <Col xs="auto">
+            <div className="setting">
+              <span>Detector</span>
+              <SelectDetector />
+            </div>
+          </Col>
+          <Col xs="auto">
+            <div className="setting">
+              <span>Clarity</span>
+              <SelectClarityThreshold />
+            </div>
+          </Col>
+        </Row>
         <Row>
           <Col className="text-center">
             <StartButton />

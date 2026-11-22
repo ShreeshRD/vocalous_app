@@ -6,7 +6,19 @@ import {
   thunk,
   Thunk,
 } from 'easy-peasy';
-import { Connection, ParentHandshake, WorkerMessenger } from 'post-me';
+import { ParentHandshake, WorkerMessenger } from 'post-me';
+
+import {
+  AppSettings,
+  loadSettings,
+  micConstraintsFor,
+  MicPreset,
+  saveSettings,
+  SessionRecord,
+  loadSessions,
+  saveSession,
+} from './services/storage';
+import { isSidecarAvailable } from './services/sidecar';
 
 type Detector = 'mcleod' | 'autocorrelation';
 
@@ -23,6 +35,14 @@ type IMelodyNotes = IMelodyNote[];
 interface Melody {
   title: string;
   notes: IMelodyNotes;
+  lines?: MelodyLyricLine[];
+}
+
+export interface MelodyLyricLine {
+  start: number;
+  duration: number;
+  text: string;
+  syllables?: { start: number; duration: number; text: string }[];
 }
 
 interface StoreModel {
@@ -34,6 +54,9 @@ interface StoreModel {
 
   clarityThreshold: number;
   setClarityThreshold: Action<StoreModel, number>;
+
+  micPreset: MicPreset;
+  setMicPreset: Action<StoreModel, MicPreset>;
 
   enabled: boolean;
   setEnabled: Action<StoreModel, boolean>;
@@ -57,31 +80,58 @@ interface StoreModel {
 
   melody: Melody;
   setMelodyNotes: Action<StoreModel, IMelodyNotes>;
+  setMelodyLines: Action<StoreModel, MelodyLyricLine[] | undefined>;
+  setMelodyTitle: Action<StoreModel, string>;
+
+  sessions: SessionRecord[];
+  refreshSessions: Action<StoreModel, SessionRecord[]>;
+  appendSession: Thunk<StoreModel, SessionRecord>;
+
+  sidecarAvailable: boolean;
+  setSidecarAvailable: Action<StoreModel, boolean>;
+  probeSidecar: Thunk<StoreModel, void>;
+
   error: ErrorType | null;
 }
 
+function initialSettings(): AppSettings {
+  return loadSettings();
+}
+
+const initial = initialSettings();
+
 export const store = createStore<StoreModel>({
-  // Default values
-  windowSize: 2048, // 1024
-  detectorName: 'mcleod',
-  clarityThreshold: 0.7, // 0.5
+  windowSize: initial.windowSize,
+  detectorName: initial.detectorName,
+  clarityThreshold: initial.clarityThreshold,
+  micPreset: initial.micPreset,
   enabled: false,
   loading: false,
   loaded: false,
   stream: null,
-  audioOptions: { audio: { echoCancellation: true, autoGainControl: true } },
+  audioOptions: micConstraintsFor(initial.micPreset),
   workerConnection: null,
-  melody: { title: '', notes: [] }, // Initial empty melody
+  melody: { title: '', notes: [] },
+  sessions: loadSessions(),
+  sidecarAvailable: false,
   error: null,
 
   setWindowSize: action((state, payload) => {
     state.windowSize = payload;
+    persistSettings(state);
   }),
   setDetectorName: action((state, payload) => {
     state.detectorName = payload;
+    persistSettings(state);
   }),
   setClarityThreshold: action((state, payload) => {
     state.clarityThreshold = payload;
+    persistSettings(state);
+  }),
+  setMicPreset: action((state, payload) => {
+    state.micPreset = payload;
+    state.audioOptions = micConstraintsFor(payload);
+    persistSettings(state);
   }),
   setEnabled: action((state, payload) => {
     state.enabled = payload;
@@ -101,11 +151,9 @@ export const store = createStore<StoreModel>({
   setError: action((state, payload) => {
     state.error = payload;
   }),
-  checkAudioContextSupport: thunk((actions, payload, { getState }) => {
-    // Safari and old versions of Chrome use window.webkitAudioContext
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
+  checkAudioContextSupport: thunk((actions) => {
+    const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
     if (AudioContext === undefined) {
-      // browser does not support Audio Context
       actions.setError('audio-context');
       console.error('Browser does not have window.AudioContext support');
     }
@@ -161,9 +209,44 @@ export const store = createStore<StoreModel>({
   setMelodyNotes: action((state, payload) => {
     state.melody.notes = payload;
   }),
+  setMelodyLines: action((state, payload) => {
+    state.melody.lines = payload;
+  }),
+  setMelodyTitle: action((state, payload) => {
+    state.melody.title = payload;
+  }),
+
+  refreshSessions: action((state, payload) => {
+    state.sessions = payload;
+  }),
+  appendSession: thunk((actions, payload) => {
+    const next = saveSession(payload);
+    actions.refreshSessions(next);
+  }),
+
+  setSidecarAvailable: action((state, payload) => {
+    state.sidecarAvailable = payload;
+  }),
+  probeSidecar: thunk(async (actions) => {
+    const ok = await isSidecarAvailable();
+    actions.setSidecarAvailable(ok);
+  }),
 });
 
-// Create a version of the standard hooks that always references our `StoreModel` type
+function persistSettings(state: {
+  windowSize: number;
+  detectorName: Detector;
+  clarityThreshold: number;
+  micPreset: MicPreset;
+}) {
+  saveSettings({
+    windowSize: state.windowSize,
+    detectorName: state.detectorName,
+    clarityThreshold: state.clarityThreshold,
+    micPreset: state.micPreset,
+  });
+}
+
 const typedHooks = createTypedHooks<StoreModel>();
 
 export const useStoreActions = typedHooks.useStoreActions;

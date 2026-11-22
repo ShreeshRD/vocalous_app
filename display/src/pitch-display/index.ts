@@ -1,18 +1,26 @@
 import { scaleLinear, ScaleLinear } from 'd3-scale';
 
-import { NOTE_OFFSET, NOTE_STRINGS } from '../constants';
+import {
+  PITCH_MIN,
+  PITCH_MAX,
+  noteStringForMidi,
+  octaveLabelForMidi,
+  isNaturalMidi,
+} from '../constants';
 
-import { noteFromPitch, colorFromNote, centsOffFromPitch } from '../utils';
+import { noteFromPitch, centsOffFromPitch } from '../utils';
 
 interface IFrequency {
   frequency: number;
   clarity: number;
   time: number;
-  // pitch is calculated from frequency
+  // pitch is calculated from frequency (MIDI float)
   pitch: number;
   // melodyPitch is the pitch that is nearest to the melody note,
-  // it can be same as pitch or in different octave
-  melodyPitch: number;
+  // it can be same as pitch or in different octave; undefined when no melody
+  melodyPitch?: number;
+  // optional input level for the bottom ribbon
+  rms?: number;
 }
 
 interface IMelodyNote {
@@ -20,6 +28,9 @@ interface IMelodyNote {
   duration: number;
   pitch: number;
 }
+
+/** Fraction of canvas height reserved for the RMS level ribbon at the bottom. */
+const LEVEL_RIBBON_FRACTION = 0.12;
 
 class PitchDisplay {
   scaleX: ScaleLinear<number, number>;
@@ -79,7 +90,6 @@ class PitchDisplay {
   subscribeToIntroState(callback: Function) {
     this.introStateListeners.push(callback);
     return () => {
-      // unsubscribe function
       for (let i = 0; i < this.introStateListeners.length; i++) {
         if (this.introStateListeners[i] === callback) {
           this.introStateListeners.splice(i, 1);
@@ -89,12 +99,22 @@ class PitchDisplay {
     };
   }
 
+  private levelRibbonHeight(): number {
+    return Math.max(24, this.container.clientHeight * LEVEL_RIBBON_FRACTION);
+  }
+
+  private staffBottom(): number {
+    return this.container.clientHeight - this.levelRibbonHeight();
+  }
+
+  private clampPitch(pitch: number): number {
+    return Math.min(PITCH_MAX, Math.max(PITCH_MIN, pitch));
+  }
+
   resize() {
     let w = this.container.clientWidth;
     let h = this.container.clientHeight;
 
-    // If device pixel ratio > 1 like in Retina display, canvas content
-    // looks blurry if not scaled
     const dpr = window.devicePixelRatio;
     const scaledW = Math.floor(dpr * w);
     const scaledH = Math.floor(dpr * h);
@@ -112,10 +132,12 @@ class PitchDisplay {
       .domain([-(this.timeSpan / 2), this.timeSpan / 2])
       .range([0, w]);
 
-    let margin = h / (NOTE_STRINGS.length + 4);
+    // Staff sits above the level ribbon; MIDI domain, no octave wrap.
+    const topMargin = Math.max(8, h / 40);
+    const bottom = this.staffBottom() - 8;
     this.scaleY = scaleLinear()
-      .domain([0, 2 * NOTE_STRINGS.length - 1])
-      .range([h - margin, margin]);
+      .domain([PITCH_MIN, PITCH_MAX])
+      .range([bottom, topMargin]);
 
     this.render();
   }
@@ -133,13 +155,11 @@ class PitchDisplay {
       let start = 0;
       if (i > 0) {
         const prevNote = this.melodyNotes[i - 1];
-        // calculate time between two notes
         start = (prevNote.start + prevNote.duration + note.start) / 2;
       }
 
       let end = Infinity;
       if (i < this.melodyNotes.length - 1) {
-        // calculate time between two notes
         const nextNote = this.melodyNotes[i + 1];
         end = (note.start + note.duration + nextNote.start) / 2;
       }
@@ -149,13 +169,14 @@ class PitchDisplay {
       }
     }
 
-    // no note found
     return undefined;
   }
 
   pushFrequency(frequency: IFrequency) {
-    // calculate pitch of the frequency
     const f: number = frequency.frequency;
+    if (!f || f <= 0 || !isFinite(f)) {
+      return;
+    }
     const note = noteFromPitch(f);
     const centsOff = centsOffFromPitch(f, note);
     const pitch = note + centsOff / 100;
@@ -163,7 +184,6 @@ class PitchDisplay {
     let melodyPitch;
     const nearestMelodyNote = this.getNearestMelodyNote(frequency.time);
     if (nearestMelodyNote) {
-      // check if other octaves of this pitch are closer to the melody note
       let diff = (pitch - nearestMelodyNote.pitch) % 12;
       if (diff > 6) {
         diff -= 12;
@@ -181,7 +201,6 @@ class PitchDisplay {
   }
 
   cleanupFrequencies() {
-    // Throw away the frequencies that are out of the current display window
     this.frequencies = this.frequencies.filter(
       (val) => this.now - val.time < this.timeSpan / 2
     );
@@ -205,7 +224,18 @@ class PitchDisplay {
   }
 
   calculateSongPos(now: number) {
+    if (this.speedChanged === undefined) {
+      return this.lastSongPos;
+    }
     return this.lastSongPos + this.playingSpeed * (now - this.speedChanged);
+  }
+
+  getSongPos(now: number = Date.now()): number {
+    return this.calculateSongPos(now);
+  }
+
+  getMelodyNotes(): IMelodyNote[] {
+    return this.melodyNotes.slice();
   }
 
   changePlayingSpeed(speed: number) {
@@ -225,7 +255,6 @@ class PitchDisplay {
 
   render(full: boolean = true) {
     this.now = new Date().getTime();
-    // calculate song position
     const songPos = this.calculateSongPos(this.now);
 
     this.cleanupFrequencies();
@@ -270,21 +299,47 @@ class PitchDisplay {
     this.bgContext.clearRect(0, 0, w, h);
     this.bgContext.fillRect(0, 0, w, h);
 
-    for (let i = 0; i < 2 * NOTE_STRINGS.length; ++i) {
-      let y = this.scaleY(i);
-      this.bgContext.fillStyle = this.highlight + '55';
+    const ribbonH = this.levelRibbonHeight();
+    // Ribbon trough
+    this.bgContext.fillStyle = 'rgba(0,0,0,0.06)';
+    this.bgContext.fillRect(0, h - ribbonH, w, ribbonH);
+    this.bgContext.strokeStyle = this.highlight + '66';
+    this.bgContext.lineWidth = 1;
+    this.bgContext.beginPath();
+    this.bgContext.moveTo(0, h - ribbonH);
+    this.bgContext.lineTo(w, h - ribbonH);
+    this.bgContext.stroke();
+    this.bgContext.fillStyle = this.highlight + '99';
+    this.bgContext.font = '11px Fira Sans';
+    this.bgContext.fillText('level', 8, h - 8);
+
+    const rowSpacing =
+      (this.staffBottom() - this.scaleY(PITCH_MAX)) /
+      Math.max(1, PITCH_MAX - PITCH_MIN);
+
+    for (let m = PITCH_MIN; m <= PITCH_MAX; m++) {
+      const y = this.scaleY(m);
+      const natural = isNaturalMidi(m);
+      this.bgContext.fillStyle = natural
+        ? this.highlight + '55'
+        : this.highlight + '22';
       this.bgContext.fillRect(0, y, w, 1);
-      this.bgContext.fillStyle = this.highlight;
-      this.bgContext.font = '14px Fira Sans';
-      this.bgContext.fillText(
-        NOTE_STRINGS[i % NOTE_STRINGS.length],
-        this.scaleX(0) + 20,
-        y - 2
-      );
+
+      if (natural) {
+        this.bgContext.fillStyle = this.highlight;
+        this.bgContext.font = '12px Fira Sans';
+        this.bgContext.fillText(
+          `${noteStringForMidi(m)}${octaveLabelForMidi(m)}`,
+          this.scaleX(0) + 12,
+          y - 2
+        );
+      }
     }
+    // silence unused var lint if any
+    void rowSpacing;
 
     this.bgContext.fillStyle = this.highlight + '55';
-    this.bgContext.fillRect(this.scaleX(0), 0, 1, h);
+    this.bgContext.fillRect(this.scaleX(0), 0, 1, this.staffBottom());
   }
 
   drawNotes() {
@@ -292,50 +347,95 @@ class PitchDisplay {
     let h = this.container.clientHeight;
 
     this.noteContext.clearRect(0, 0, w, h);
-    this.noteContext.beginPath();
-    this.noteContext.strokeStyle = 'rgba(0, 0, 0, 0.1)';
 
-    // Calculate notes and colors from frequencies
-    const notes = [];
+    // Pitch dots
     for (let frequency of this.frequencies) {
       let t: number = frequency.time;
       let c: number = frequency.clarity;
       let x = this.scaleX(t - this.now);
-      const pitch = frequency.melodyPitch
-        ? frequency.melodyPitch
-        : frequency.pitch;
-      let y = this.scaleY((pitch + NOTE_OFFSET) % 24);
-      // let color = colorFromNote(Math.floor(frequency.pitch));
-      const color = [254, 74, 73];
-      notes.push({
-        time: t,
-        x,
-        y,
-        clarity: c,
-        color,
-      });
-    }
+      const pitch =
+        frequency.melodyPitch != null ? frequency.melodyPitch : frequency.pitch;
+      let y = this.scaleY(this.clampPitch(pitch));
+      const color = this.colorForPitch(frequency, pitch);
 
-    // Draw circles
-    for (let note of notes) {
-      const { x, y, clarity, color } = note;
       this.noteContext.fillStyle = `rgba(${color[0]}, ${color[1]}, ${
         color[2]
-      }, ${clarity * 0.5})`;
+      }, ${c * 0.5})`;
       this.noteContext.beginPath();
       this.noteContext.arc(x, y, 5, 0, Math.PI * 2);
       this.noteContext.fill();
     }
+
+    this.drawLevelRibbon();
+  }
+
+  /** Bottom RMS strip, time-aligned with pitch dots (scrolls with the graph). */
+  private drawLevelRibbon() {
+    const w = this.container.clientWidth;
+    const h = this.container.clientHeight;
+    const ribbonH = this.levelRibbonHeight();
+    const top = h - ribbonH;
+
+    // Sample spacing from consecutive times when available
+    let spacing = 8;
+    if (this.frequencies.length >= 2) {
+      const dt =
+        this.frequencies[this.frequencies.length - 1].time -
+        this.frequencies[0].time;
+      if (dt > 0) {
+        spacing = Math.min(
+          10,
+          Math.max(4, (this.scaleX(dt / (this.frequencies.length - 1))) || 8)
+        );
+      }
+    }
+
+    for (const frequency of this.frequencies) {
+      const rms = frequency.rms ?? 0;
+      if (rms < 0.005) {
+        continue;
+      }
+      const x = this.scaleX(frequency.time - this.now);
+      if (x < -20 || x > w + 20) {
+        continue;
+      }
+      const level = Math.min(1, rms * 4);
+      const barH = Math.max(2, level * (ribbonH - 6));
+      let fill = '#4caf50';
+      if (rms > 0.35) {
+        fill = '#ff9800';
+      } else if (rms < 0.01) {
+        fill = '#9e9e9e';
+      }
+      this.noteContext.fillStyle = fill;
+      this.noteContext.globalAlpha = 0.85;
+      this.noteContext.fillRect(x, top + ribbonH - barH - 2, spacing, barH);
+      this.noteContext.globalAlpha = 1;
+    }
+  }
+
+  colorForPitch(frequency: IFrequency, pitch: number): [number, number, number] {
+    if (frequency.melodyPitch == null) {
+      return [254, 74, 73];
+    }
+    const errCents = Math.abs((pitch - frequency.melodyPitch) * 100);
+    if (errCents <= 50) {
+      return [76, 175, 80];
+    }
+    if (errCents <= 100) {
+      return [255, 152, 0];
+    }
+    return [254, 74, 73];
   }
 
   drawTimeMarkers(songPos: number) {
-    let h = this.container.clientHeight;
+    let h = this.staffBottom();
     const marks = [];
     const interval = 1000;
     for (let i = -this.timeSpan / 2; i <= this.timeSpan / 2; i += interval) {
       marks.push({
         x: this.scaleX(i - (songPos % interval)),
-        y: h - 20,
+        y: h - 8,
       });
     }
     this.noteContext.fillStyle = this.highlight;
@@ -348,20 +448,28 @@ class PitchDisplay {
 
   drawMelody(songPos: number) {
     let w = this.container.clientWidth;
-    let h = this.container.clientHeight;
+    let h = this.staffBottom();
 
     const ctx: CanvasRenderingContext2D = this.melodyContext;
-    ctx.clearRect(0, 0, w, h);
-    ctx.strokeStyle = 'rgba(32, 164, 243, 0.8)';
-    ctx.lineWidth = h / 36;
+    ctx.clearRect(0, 0, this.container.clientWidth, this.container.clientHeight);
     ctx.lineCap = 'round';
+    const mainWidth = Math.max(8, h / 48);
     for (let note of this.melodyNotes) {
       const { start, duration, pitch } = note;
       const startX = this.scaleX(start - songPos);
       const endX = this.scaleX(start - songPos + duration);
-      const y = this.scaleY((pitch + NOTE_OFFSET) % 24);
+      const y = this.scaleY(this.clampPitch(pitch));
+
+      ctx.strokeStyle = 'rgba(32, 164, 243, 0.18)';
+      ctx.lineWidth = Math.max(8, mainWidth * 0.9);
       ctx.beginPath();
-      // because lineCap is round, make line a bit shorter
+      ctx.moveTo(startX, y);
+      ctx.lineTo(endX, y);
+      ctx.stroke();
+
+      ctx.strokeStyle = 'rgba(32, 164, 243, 0.8)';
+      ctx.lineWidth = mainWidth;
+      ctx.beginPath();
       ctx.moveTo(startX + ctx.lineWidth / 2, y);
       ctx.lineTo(endX - ctx.lineWidth / 2, y);
       ctx.stroke();

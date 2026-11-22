@@ -5,6 +5,8 @@ import { useTranslation } from 'react-i18next';
 import About from './about';
 import Importer from '../importer';
 import Sing from './sing';
+import Exercises from './exercises';
+import History from './history';
 
 function Header() {
   const { t } = useTranslation();
@@ -20,12 +22,18 @@ function Tabs() {
   const { t } = useTranslation();
   return (
     <Tab.Container id="tab-container" defaultActiveKey="sing">
-      <Nav variant="pills">
+      <Nav variant="pills" className="flex-wrap">
         <Nav.Item>
           <Nav.Link eventKey="sing">{t('TAB.SING')}</Nav.Link>
         </Nav.Item>
         <Nav.Item>
+          <Nav.Link eventKey="exercise">{t('TAB.EXERCISE')}</Nav.Link>
+        </Nav.Item>
+        <Nav.Item>
           <Nav.Link eventKey="create">{t('TAB.CREATE')}</Nav.Link>
+        </Nav.Item>
+        <Nav.Item>
+          <Nav.Link eventKey="history">{t('TAB.HISTORY')}</Nav.Link>
         </Nav.Item>
         <Nav.Item>
           <Nav.Link eventKey="help">
@@ -37,8 +45,14 @@ function Tabs() {
         <Tab.Pane eventKey="sing">
           <Sing />
         </Tab.Pane>
+        <Tab.Pane eventKey="exercise">
+          <Exercises />
+        </Tab.Pane>
         <Tab.Pane eventKey="create">
           <Importer />
+        </Tab.Pane>
+        <Tab.Pane eventKey="history">
+          <History />
         </Tab.Pane>
         <Tab.Pane eventKey="help">
           <About />

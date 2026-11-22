@@ -96,3 +96,18 @@ export function SelectClarityThreshold() {
     </Form>
   );
 }
+
+export function SelectMicPreset() {
+  const micPreset = useStoreState((state) => state.micPreset);
+  const setMicPreset = useStoreActions((actions) => actions.setMicPreset);
+  return (
+    <Select
+      selected={micPreset}
+      onSelect={setMicPreset}
+      choices={[
+        { value: 'studio', desc: 'Studio mic (singing)' },
+        { value: 'laptop', desc: 'Laptop mic (processed)' },
+      ]}
+    />
+  );
+}

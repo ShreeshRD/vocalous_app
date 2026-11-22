@@ -44,8 +44,12 @@ function FileForm({ onComplete }) {
       const parsed = parseUltraStarTxt(data);
       if (parsed && parsed.notes.length) {
         if (form.checkValidity()) {
+          // s1 encoding carries notes only; lines ride on a separate param when present
           const encoded = encodeS1(parsed);
-          await generateURL({ s1: encoded });
+          const linePayload = parsed.lines?.length
+            ? btoa(unescape(encodeURIComponent(JSON.stringify(parsed.lines))))
+            : undefined;
+          await generateURL({ s1: encoded, sl: linePayload });
         }
         setValidated(true);
       } else {

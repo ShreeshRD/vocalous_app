@@ -15,14 +15,38 @@ const readMelodyNotes = () => {
   }
 };
 
+const readMelodyLines = () => {
+  const params = qs.parse(window.location.search.substr(1));
+  if (params.sl) {
+    try {
+      const json = decodeURIComponent(escape(atob(String(params.sl))));
+      const parsed = JSON.parse(json);
+      return Array.isArray(parsed) ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+};
+
 export function AppFrame({ children }: { children: React.ReactNode }) {
-  const { setMelodyNotes } = useStoreActions((actions) => actions);
+  const { setMelodyNotes, setMelodyLines, setMelodyTitle, probeSidecar } =
+    useStoreActions((actions) => actions);
   useEffect(() => {
     const notes = readMelodyNotes();
     if (notes) {
       setMelodyNotes(notes);
     }
-  }, [setMelodyNotes]);
+    const lines = readMelodyLines();
+    if (lines) {
+      setMelodyLines(lines);
+    }
+    const params = qs.parse(window.location.search.substr(1));
+    if (params.title) {
+      setMelodyTitle(String(params.title));
+    }
+    probeSidecar();
+  }, [setMelodyNotes, setMelodyLines, setMelodyTitle, probeSidecar]);
 
   return (
     <React.Fragment>

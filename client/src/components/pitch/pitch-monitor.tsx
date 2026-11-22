@@ -1,6 +1,4 @@
-import { Connection } from 'post-me';
 import React from 'react';
-import { WorkerMethods } from '../../../worker/types';
 
 interface PitchSetup {
   analyser?: AnalyserNode;
@@ -8,6 +6,7 @@ interface PitchSetup {
   buffer?: Float32Array;
   byteBuffer?: Uint8Array;
 }
+
 interface PitchProps {
   stream: MediaStream;
   workerConnection: any;
@@ -15,39 +14,54 @@ interface PitchProps {
   windowSize: number;
   powerThreshold: number;
   clarityThreshold: number;
+  /** RMS below this is treated as silence/noise (not voice). */
+  noiseGateRms?: number;
   enabled: boolean;
   pitchRenderer: React.ComponentType<{
     freq: number | null;
     clarity: number | null;
+    rms?: number | null;
   }>;
+  onPitchSample?: (sample: {
+    freq: number | null;
+    clarity: number | null;
+    rms: number;
+    time: number;
+  }) => void;
 }
 
-// Converts byte buffer to float buffer. Buffers must have same length.
 const convertByteToFloatBuffer = (byteBuf: Uint8Array, floatBuf: Float32Array) => {
   for (let i = 0; i < byteBuf.length; i++) {
     floatBuf[i] = byteBuf[i] / 128 - 1;
   }
 };
 
+function computeRms(buffer: Float32Array): number {
+  let sum = 0;
+  for (let i = 0; i < buffer.length; i++) {
+    sum += buffer[i] * buffer[i];
+  }
+  return Math.sqrt(sum / buffer.length);
+}
+
+/** Median of a small numeric array (copies and sorts). */
+function median(values: number[]): number {
+  if (!values.length) {
+    return 0;
+  }
+  const s = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 === 0 ? (s[mid - 1] + s[mid]) / 2 : s[mid];
+}
+
 /**
  * While `enabled` is truthy, get the pitch from the input source,
- * and pass its frequency and clarity to `pitchRenderer`.
+ * and pass its frequency, clarity, and RMS to `pitchRenderer`.
  *
- * `pitchRenderer` should be a react component that accepts `freq` and `clarity`
- * props.
- *
- * @export
- * @param {PitchProps} {
- *   stream,
- *   detectorName,
- *   workerConnection,
- *   windowSize,
- *   powerThreshold,
- *   clarityThreshold,
- *   enabled,
- *   pitchRenderer,
- * }
- * @returns
+ * Noise rejection:
+ * - RMS noise gate (silence / room tone rejected)
+ * - Hangover: need 2 consecutive voiced frames to open, 4 to close
+ * - 5-sample median on frequency to kill single-frame spikes
  */
 export function PitchMonitor({
   stream,
@@ -56,43 +70,57 @@ export function PitchMonitor({
   windowSize,
   powerThreshold,
   clarityThreshold,
+  noiseGateRms = 0.012,
   enabled,
   pitchRenderer,
+  onPitchSample,
 }: PitchProps) {
   const [freq, setFreq] = React.useState<number | null>(null);
   const [clarity, setClarity] = React.useState<number | null>(null);
+  const [rms, setRms] = React.useState<number | null>(null);
   const pendingRef = React.useRef(false);
   const pitchSetupRef = React.useRef<PitchSetup>({});
+  const onPitchSampleRef = React.useRef(onPitchSample);
+  onPitchSampleRef.current = onPitchSample;
 
-  // Gets called first-thing whenever this component's props change.
+  // VAD hangover + median history (refs so they survive re-renders)
+  const voicedRunRef = React.useRef(0);
+  const silenceRunRef = React.useRef(0);
+  const gateOpenRef = React.useRef(false);
+  const freqHistoryRef = React.useRef<number[]>([]);
+
   const setupConnection = React.useCallback(async () => {
     await workerConnection
       .remoteHandle()
       .call('createDetector', detectorName, windowSize, windowSize / 2);
     const pitchSetup = pitchSetupRef.current;
     pitchSetup.buffer = new Float32Array(windowSize);
-    // Old browsers use webkitAudioContext
     pitchSetup.audioContext = new (window.AudioContext ||
-      window.webkitAudioContext)();
-    // Create an AudioNode from the stream.
+      (window as any).webkitAudioContext)();
     const mediaStreamSource = pitchSetup.audioContext.createMediaStreamSource(
       stream
     );
-    // Connect it to the destination.
     pitchSetup.analyser = pitchSetup.audioContext.createAnalyser();
     if (pitchSetup.analyser.getFloatTimeDomainData === undefined) {
-      // byte buffer is needed for support for incomplete audio API implementation
       pitchSetup.byteBuffer = new Uint8Array(windowSize);
     }
     pitchSetup.analyser.fftSize = windowSize;
     mediaStreamSource.connect(pitchSetup.analyser);
+
+    // Reset gate state for a new stream/session
+    voicedRunRef.current = 0;
+    silenceRunRef.current = 0;
+    gateOpenRef.current = false;
+    freqHistoryRef.current = [];
   }, [pitchSetupRef, windowSize, detectorName, stream, workerConnection]);
 
-  // Find the current pitch/clarity and save it in `freq`/`clarity`.
   const updatePitch = React.useCallback(async () => {
-    if (!pendingRef.current) {
-      pendingRef.current = true;
+    if (pendingRef.current) {
+      return;
+    }
+    pendingRef.current = true;
 
+    try {
       const pitchSetup = pitchSetupRef.current;
       const { analyser, buffer, byteBuffer, audioContext } = pitchSetup;
       if (!analyser || !buffer || !audioContext) {
@@ -103,33 +131,82 @@ export function PitchMonitor({
       }
       if (analyser.getFloatTimeDomainData !== undefined) {
         analyser.getFloatTimeDomainData(buffer as any);
-      } else {
-        // Some browsers do not have AnalyserNode.getFloatTimeDomainData() yet,
-        // so use getByteTimeDomainData method instead.
-        if (byteBuffer) {
-          analyser.getByteTimeDomainData(byteBuffer as any);
-          convertByteToFloatBuffer(byteBuffer as any, buffer);
-        }
-      }
-      const result = await workerConnection
-        .remoteHandle()
-        .call(
-          'getPitch',
-          buffer,
-          audioContext.sampleRate,
-          powerThreshold,
-          clarityThreshold
-        );
-      const frequency = result[0];
-      const clarity = result[1];
-      if (frequency > 0) {
-        setFreq(frequency);
-        setClarity(clarity);
-      } else {
-        setFreq(null);
-        setClarity(null);
+      } else if (byteBuffer) {
+        analyser.getByteTimeDomainData(byteBuffer as any);
+        convertByteToFloatBuffer(byteBuffer as any, buffer);
       }
 
+      const level = computeRms(buffer);
+      setRms((prev) => {
+        if (prev == null || Math.abs(prev - level) > 0.005) {
+          return level;
+        }
+        return prev;
+      });
+
+      // Hard noise gate: room tone / hum never reaches the pitch worker
+      const aboveGate = level >= noiseGateRms;
+
+      let rawFreq = -1;
+      let clarityVal = 0;
+      if (aboveGate) {
+        const result = await workerConnection
+          .remoteHandle()
+          .call(
+            'getPitch',
+            buffer,
+            audioContext.sampleRate,
+            powerThreshold,
+            clarityThreshold
+          );
+        rawFreq = result[0];
+        clarityVal = result[1];
+      }
+
+      const detectorHit = rawFreq > 0 && clarityVal >= clarityThreshold;
+
+      // Hangover VAD: open after 2 voiced frames, close after 4 silent frames
+      if (detectorHit && aboveGate) {
+        voicedRunRef.current += 1;
+        silenceRunRef.current = 0;
+        if (!gateOpenRef.current && voicedRunRef.current >= 2) {
+          gateOpenRef.current = true;
+        }
+      } else {
+        silenceRunRef.current += 1;
+        voicedRunRef.current = 0;
+        if (gateOpenRef.current && silenceRunRef.current >= 4) {
+          gateOpenRef.current = false;
+          freqHistoryRef.current = [];
+        }
+      }
+
+      let accepted: number | null = null;
+      let acceptedClarity: number | null = null;
+
+      if (gateOpenRef.current && detectorHit) {
+        const hist = freqHistoryRef.current;
+        hist.push(rawFreq);
+        if (hist.length > 5) {
+          hist.shift();
+        }
+        // Only emit once we have a short history (kills first-frame spikes)
+        if (hist.length >= 3) {
+          accepted = median(hist);
+          acceptedClarity = clarityVal;
+        }
+      }
+
+      setFreq(accepted);
+      setClarity(acceptedClarity);
+
+      onPitchSampleRef.current?.({
+        freq: accepted,
+        clarity: acceptedClarity ?? 0,
+        rms: level,
+        time: Date.now(),
+      });
+    } finally {
       pendingRef.current = false;
     }
   }, [
@@ -137,19 +214,15 @@ export function PitchMonitor({
     pitchSetupRef,
     setFreq,
     setClarity,
+    setRms,
     powerThreshold,
     clarityThreshold,
+    noiseGateRms,
     workerConnection,
   ]);
 
-  // This function only gets called when the dependencies update, and it automatically
-  // cleans up when it is called subsequent times. It starts an endless loop
-  // of computing the current pitch.
   React.useEffect(() => {
     if (!enabled) {
-      // This function runs whenever the state of `enabled` changes.
-      // When this function is re-run, it automatically cancels the
-      // the audio monitoring, so all we need to do is return here.
       return;
     }
     console.log('Starting audio monitoring.');
@@ -173,5 +246,5 @@ export function PitchMonitor({
   }, [setupConnection, updatePitch, enabled]);
 
   const PitchRenderer = pitchRenderer;
-  return <PitchRenderer freq={freq} clarity={clarity} />;
+  return <PitchRenderer freq={freq} clarity={clarity} rms={rms} />;
 }

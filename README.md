@@ -1,6 +1,8 @@
 # Vocalous
 
-An open source web app that help to practice singing by tracking the pitch.
+An open source web app that helps practice singing with pitch tracking, scoring, exercises, and optional local voice tools.
+
+See `plans/singing-coach-roadmap.md` for the feature roadmap and `AGENT.md` for the DOX work contracts.
 
 ## Building
 ```bash
@@ -19,6 +21,17 @@ cd ../client
 npm install
 npm run start
 ```
+
+Or from the repo root: `./run` (port 3000, base `/app/`).
+
+### Optional sidecar (lyrics check / denoise)
+
+```bash
+cd backend
+python server.py   # http://127.0.0.1:8765/health
+```
+
+See `backend/README.md`.
 
 ## Credits
 

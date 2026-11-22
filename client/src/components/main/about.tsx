@@ -21,6 +21,14 @@ export default function About() {
       <Row>
         <Col>
           <h3>{t('FAQ.TITLE')}</h3>
+          <h5>{t('FAQ.COACH.TITLE')}</h5>
+          <ul>
+            <li>{t('FAQ.COACH.1')}</li>
+            <li>{t('FAQ.COACH.2')}</li>
+            <li>{t('FAQ.COACH.3')}</li>
+            <li>{t('FAQ.COACH.4')}</li>
+            <li>{t('FAQ.COACH.5')}</li>
+          </ul>
           <h5>{t('FAQ.MUSIC.TITLE')}</h5>
           <p>{t('FAQ.MUSIC.BODY')}</p>
           <h5>{t('FAQ.HOW_WORKS.TITLE')}</h5>
