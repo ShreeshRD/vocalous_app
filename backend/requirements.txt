@@ -1,4 +1,5 @@
 # Core sidecar runs on Python stdlib only.
 # Optional extras:
+#   pip install praat-parselmouth   # POST /analyze (Phase 6)
 #   pip install inworld-voice-isolation
 # ASR: install/build parakeet-cli from VoiceAssistant/linux

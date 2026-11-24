@@ -19,6 +19,8 @@ import {
 } from '../../services/pitchTrack';
 import { scoreSession, SessionScore, NoteAttempt } from '../../services/scoring';
 import { SessionRecord, SessionNoteResult } from '../../services/storage';
+import { analyzeAudio, AnalyzeResult } from '../../services/sidecar';
+import { stopSessionAudio } from '../../services/sessionAudio';
 import { LyricsBar } from './lyrics';
 import { analyzeVibrato } from '../../services/scoring';
 
@@ -71,17 +73,103 @@ function statusBadgeClass(status: SessionNoteResult['status']): string {
   return 'bg-danger';
 }
 
+function DeepAnalysis({
+  wav,
+  enabled,
+}: {
+  wav: Blob | null;
+  enabled: boolean;
+}) {
+  const { t } = useTranslation();
+  const [result, setResult] = useState<AnalyzeResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  if (!enabled) {
+    return null;
+  }
+
+  const run = async () => {
+    if (!wav || busy) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await analyzeAudio(wav);
+      setResult(res);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="deep-analysis border rounded p-3 mb-3 bg-light">
+      <div className="d-flex align-items-center gap-2 flex-wrap">
+        <strong>{t('ANALYSIS.TITLE')}</strong>
+        <Button size="sm" variant="outline-primary" onClick={run} disabled={busy || !wav}>
+          {busy ? t('ANALYSIS.RUNNING') : result ? t('ANALYSIS.RERUN') : t('ANALYSIS.RUN')}
+        </Button>
+      </div>
+      <div className="text-muted small mb-2">{t('ANALYSIS.HINT')}</div>
+      {error && (
+        <div className="small text-danger" role="alert">
+          {error}
+        </div>
+      )}
+      {result && (
+        <div className="small analysis-results">
+          <div className="mb-1">
+            <Badge bg="info" className="me-2">
+              {t('ANALYSIS.RANGE')}:{' '}
+              {result.pitch.lowNote && result.pitch.highNote
+                ? `${result.pitch.lowNote} – ${result.pitch.highNote}`
+                : '—'}
+            </Badge>
+            <Badge bg="secondary" className="me-2">
+              {t('ANALYSIS.VOICED')}:{' '}
+              {Math.round(result.pitch.voicedFraction * 100)}%
+            </Badge>
+            <Badge bg="secondary">
+              {t('ANALYSIS.MEDIAN')}:{' '}
+              {result.pitch.medianHz ? `${Math.round(result.pitch.medianHz)} Hz` : '—'}
+            </Badge>
+          </div>
+          <div className="text-muted mb-1">
+            {t('ANALYSIS.INTENSITY')}:{' '}
+            {result.intensity.meanDb != null
+              ? `${result.intensity.meanDb} dB mean · ${result.intensity.peakDb} peak · σ ${result.intensity.stdDb}`
+              : '—'}
+          </div>
+          <div className="text-muted">
+            {t('ANALYSIS.FORMANTS')}:{' '}
+            {result.formants.f1 != null
+              ? `F1 ${result.formants.f1} · F2 ${result.formants.f2 ?? '—'} · F3 ${result.formants.f3 ?? '—'} Hz`
+              : '—'}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ScoreSummary({
   score,
   title,
   range,
   vibrato,
+  sessionWav,
+  showDeepAnalysis,
   onClose,
 }: {
   score: SessionScore;
   title: string;
   range?: { low: number; high: number } | null;
   vibrato?: { rateHz: number; depthCents: number; regularity: number } | null;
+  sessionWav?: Blob | null;
+  showDeepAnalysis?: boolean;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -148,6 +236,8 @@ function ScoreSummary({
             {t('SCORE.REGULARITY')}: {Math.round(vibrato.regularity * 100)}%
           </p>
         )}
+
+        {showDeepAnalysis && <DeepAnalysis wav={sessionWav ?? null} enabled />}
 
         <div className="note-ribbon d-flex flex-wrap gap-1 mb-3">
           {score.notes.map((n) => (
@@ -350,6 +440,7 @@ function PitchComponent({ freq, clarity, rms }: PitchProps) {
     depthCents: number;
     regularity: number;
   } | null>(null);
+  const [sessionWav, setSessionWav] = useState<Blob | null>(null);
   const [hudSongPos, setHudSongPos] = useState<number | null>(null);
   const startedAtRef = useRef<number>(0);
 
@@ -459,6 +550,8 @@ function PitchComponent({ freq, clarity, rms }: PitchProps) {
 
   const onStop = async () => {
     const samples = stopPitchTrack();
+    // Finalize session WAV before the stream/graph is torn down (Phase 6)
+    const wav = stopSessionAudio();
     const durationMs = Date.now() - (startedAtRef.current || Date.now());
     const melodyNotes = hasNotes ? notes : [];
 
@@ -517,7 +610,11 @@ function PitchComponent({ freq, clarity, rms }: PitchProps) {
       setSummaryTitle(record.title);
       setSummaryRange(range);
       setSummaryVibrato(vibrato);
+      setSessionWav(wav);
       setSummary(score);
+    } else {
+      // Free mode has no ScoreSummary — keep WAV only if we ever add analysis there
+      setSessionWav(wav);
     }
 
     setEnabled(false);
@@ -610,6 +707,8 @@ function PitchComponent({ freq, clarity, rms }: PitchProps) {
           title={summaryTitle}
           range={summaryRange}
           vibrato={summaryVibrato}
+          sessionWav={sessionWav}
+          showDeepAnalysis={sidecarAvailable}
           onClose={() => setSummary(null)}
         />
       )}

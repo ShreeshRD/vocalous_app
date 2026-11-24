@@ -1,4 +1,4 @@
-"""Minimal Vocalous sidecar: /health, /isolate, /transcribe on localhost."""
+"""Minimal Vocalous sidecar: /health, /isolate, /transcribe, /analyze on localhost."""
 
 from __future__ import annotations
 
@@ -111,6 +111,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_isolate(body, ctype)
             elif path == "/transcribe":
                 self._handle_transcribe(body, ctype)
+            elif path == "/analyze":
+                self._handle_analyze(body, ctype)
             else:
                 self._json(404, {"error": "not found"})
         except Exception as e:  # noqa: BLE001 — surface to client
@@ -201,6 +203,26 @@ class Handler(BaseHTTPRequestHandler):
                         }
                     )
             self._json(200, {"words": words, "language": "en"})
+        finally:
+            wav_path.unlink(missing_ok=True)
+
+    def _handle_analyze(self, body: bytes, ctype: str) -> None:
+        from praat_bridge import AnalysisUnavailable, analyze_wav
+
+        wav_path = self._save_upload(body, ctype)
+        try:
+            try:
+                result = analyze_wav(str(wav_path))
+            except AnalysisUnavailable as e:
+                self._json(
+                    501,
+                    {
+                        "error": str(e),
+                        "hint": "pip install praat-parselmouth",
+                    },
+                )
+                return
+            self._json(200, result)
         finally:
             wav_path.unlink(missing_ok=True)
 

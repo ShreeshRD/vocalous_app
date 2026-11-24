@@ -45,3 +45,13 @@ export function appendPitchTrack(point: PitchTrackPoint): void {
 export function getPitchTrack(): PitchTrackPoint[] {
   return points;
 }
+
+/**
+ * Debug export for backend/validate_detector.py — includes wall-clock
+ * startedAt so track times can be aligned to a session WAV.
+ */
+export function exportPitchTrackDebug(
+  startedAt: number
+): { startedAt: number; points: PitchTrackPoint[] } {
+  return { startedAt, points: points.slice() };
+}

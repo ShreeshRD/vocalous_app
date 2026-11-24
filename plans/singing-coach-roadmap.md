@@ -1,6 +1,8 @@
 # Plan: Vocalous → Full Singing-Practice Coach
 
 > **Status (implementation pass):** Phases 0–5 landed in-tree. Client builds (`display` tsc + `client` vite). Sidecar is a stdlib skeleton (optional models/ASR). Manual golden-path QA with mic still required.
+>
+> **Phase 6 (partial):** `/analyze` + `praat_bridge.py` + `validate_detector.py` + client session WAV + Deep analysis UI landed. Tool evaluation recorded under Non-goals (CREPE / pYIN / openSMILE rejected for v1). Remaining: manual golden-path QA with mic/sidecar, optional formant coaching, FAQ copy already updated.
 
 ## Context
 
@@ -18,6 +20,7 @@ Vocalous (`/home/arch/programs/extra/vocalous_app`) is a React + Vite web app th
 |------|------------|------------|---------------------|
 | Dictation at `~/programs/personal_organization/VoiceAssistant/linux/` | Local Python daemon/CLI; Bark 3.0 via whisper.cpp `parakeet-cli`; PipeWire capture; English-only; 16 kHz WAV; CPU-only | **Local process** (not browser) | Needs a thin local HTTP backend the web app can call |
 | [Inworld Voice Isolator](https://github.com/inworld-ai/voice-isolator) | Apache-2.0 speech denoising; offline (64M) + realtime (58M) models; 48 kHz; PyTorch | **Local Python/PyTorch** (CUDA/CPU/MPS) | Same local backend; not practical as pure WASM in v1 |
+| [Parselmouth](https://parselmouth.readthedocs.io) (Praat bindings) | Python access to Praat's C/C++: pitch, formant, intensity — reference-standard offline measurements | **Local Python** (sidecar) | Post-session `/analyze` only; never on the live mic path (Phase 6) |
 
 **Architecture decision:** keep the existing client-side pitch pipeline (fast, private, offline). Add an **optional local Python sidecar** (`backend/`) for heavy audio ML (denoise → pitch/ASR). App must still work fully without the sidecar (pitch-only mode).
 
@@ -31,6 +34,7 @@ Vocalous (`/home/arch/programs/extra/vocalous_app`) is a React + Vite web app th
 4. **Vocal tools**: range finder, warmups/drills, vibrato visualizer.
 5. **Progress**: local history, trends, session summaries.
 6. **Optional clarity + articulation**: Voice Isolator cleanup + dictation lyrics check.
+7. **Reference-grade post-session analysis** (optional sidecar): Praat-measured range/intensity for the take, plus a detector-validation harness so McLeod decisions are data-backed.
 
 ---
 
@@ -41,6 +45,9 @@ Vocalous (`/home/arch/programs/extra/vocalous_app`) is a React + Vite web app th
 - Training custom models
 - Replacing UltraStar import flow
 - Perfect studio-grade ASR for melisma (best-effort word timing)
+- **CREPE** (neural pitch tracker): real robustness gains, but needs a TF/ONNX runtime + multi-MB model in the browser and a new WASM build path; revisit only if validation (Phase 6.3) shows McLeod failing measurably on real takes.
+- **pYIN** as a live detector: same autocorrelation family as the current McLeod default — expected marginal gain; if 6.3 shows an octave/stability gap, port pYIN to Rust as a third WASM detector before considering neural.
+- **openSMILE**: feature extractor aimed at ML classification (jitter/shimmer/HNR feature sets); no consumer in v1 — Parselmouth already covers pitch/formant/intensity measurement.
 
 ---
 
@@ -230,6 +237,43 @@ POST /transcribe multipart wav → { words: [{text, start, end}], language }
 
 ---
 
+### Phase 6 — Post-session acoustic analysis (Praat/Parselmouth sidecar)
+
+**Decision:** use **Praat via `parselmouth`** in the existing local sidecar for offline voice analysis. Parselmouth drives Praat's own C/C++ code, so measurements match desktop Praat — the reference standard for pitch, formants, and intensity. It is **batch/post-session only** (never on the live mic path); the real-time display stays on McLeod in the WASM worker. `openSMILE` rejected (feature-extractor for ML classification, no v1 consumer); `CREPE`/`pYIN` rejected for v1 — see Non-goals.
+
+**6.1 Sidecar `/analyze` endpoint** — `backend/server.py` + new `backend/praat_bridge.py`
+
+- `POST /analyze` multipart `file` (wav, mic-only export from Phase 0 buffer) → JSON:
+  - **Pitch:** contour (time, F0 Hz, clarity) + summary (median F0, 5th/95th percentile low/high → measured range in MIDI note names, voiced fraction).
+  - **Intensity:** mean/peak dB, dynamics spread (dB std), silence/clipping flags.
+  - **Formants:** mean F1/F2/F3 on voiced segments (v1 stores them; vowel-level coaching is later).
+- Dependency: `parselmouth` in `requirements.txt` (pip-installable, no Praat GUI needed). Absent → `501` (same degrade pattern as `/isolate`).
+- CORS + localhost-only unchanged. Optional feature gated by sidecar health as today.
+
+**6.2 Client analysis UI** — summary overlay + `services/sidecar.ts`
+
+- After Stop, when sidecar available: optional **"Deep analysis"** action → `POST /analyze` → append a section to the Phase 1 summary:
+  - Measured range for this take (vs Phase 4 stored range — first real progress metric).
+  - Intensity consistency line (quiet/loud drift, useful for mic-distance and breath support hints).
+  - Raw formants surfaced as numbers only (no coaching claims in v1).
+- Keep scoring independent: analysis enriches the summary, never gates the score.
+
+**6.3 Detector validation harness (engineering tool)** — `backend/validate_detector.py` (CLI, not user-facing)
+
+- Record a session with both the existing `PitchTrack` (`{t, freq, clarity, rms}`) **and** the mic WAV.
+- Run Praat pitch on the same WAV; align contours; report: median absolute cents error, octave-error rate, voiced/unvoiced disagreement vs McLeod (and vs autocorrelation when toggled).
+- Purpose: decide with data whether to stay on McLeod, add pYIN as a third WASM detector, or revisit CREPE later. Fixture takes: clean studio-ish, quiet/laptop mic, low male voice, vibrato-heavy, melisma.
+
+**6.4 Privacy copy**
+
+- FAQ (`FAQ.PRIVACY.BODY`) currently promises audio never leaves the browser — true only for the live pitch path. When `/analyze` ships, reword: analysis audio goes to the **local** sidecar only when the user opts in; still no network egress.
+
+**Exit criteria:** with sidecar + parselmouth, Stop → Deep analysis shows this-take range and intensity without touching live pitch latency; validator produces a cents-error report for McLeod vs Praat; app fully works with sidecar absent; FAQ wording matches actual behavior.
+
+**Files:** `backend/server.py`, `backend/praat_bridge.py`, `backend/validate_detector.py`, `backend/requirements.txt`, `client/src/services/sidecar.ts`, summary component in `client/src/components/pitch/index.tsx`, `client/src/translations/en-US.json`.
+
+---
+
 ## Suggested implementation order
 
 ```text
@@ -239,9 +283,10 @@ Phase 2  timing metrics
 Phase 3  backend sidecar + lyrics + articulation (+ isolator)
 Phase 4  range, exercises, vibrato
 Phase 5  progress / trends
+Phase 6  Praat/Parselmouth post-session analysis + detector validation
 ```
 
-Phases 4–5 can partially parallelize after Phase 1 (exercises reuse scoring; progress needs session records from 1–2).
+Phases 4–5 can partially parallelize after Phase 1 (exercises reuse scoring; progress needs session records from 1–2). Phase 6 depends on Phase 0.2 (session WAV buffer) and the Phase 3 sidecar skeleton; 6.3 can run early as a CLI even before UI work.
 
 ---
 
@@ -258,6 +303,7 @@ Phases 4–5 can partially parallelize after Phase 1 (exercises reuse scoring; p
 | Melody from URL | `client/src/components/main/app-frame.tsx` |
 | Unused note wheel | `client/src/components/circle-chart/` |
 | Options UI | `client/src/components/main/options.tsx` |
+| Sidecar endpoints | `backend/server.py` (`/health` `/isolate` `/transcribe`, later `/analyze`) |
 | Build/run | `./run` → wasm → display → client :3000 |
 
 ---
@@ -266,11 +312,13 @@ Phases 4–5 can partially parallelize after Phase 1 (exercises reuse scoring; p
 
 ```text
 backend/
-  README.md          # install dictate runtime + inworld-voice-isolation
-  requirements.txt   # fastapi, uvicorn, inworld-voice-isolation (optional extra)
-  server.py          # /health /isolate /transcribe
+  README.md          # install dictate runtime + inworld-voice-isolation + parselmouth
+  requirements.txt   # fastapi, uvicorn, parselmouth (Phase 6), inworld-voice-isolation (optional extra)
+  server.py          # /health /isolate /transcribe /analyze
   asr_bridge.py      # wrap VoiceAssistant ASR / parakeet-cli
   isolate_bridge.py  # wrap inworld.voice_isolation
+  praat_bridge.py    # wrap parselmouth: pitch / intensity / formants (Phase 6)
+  validate_detector.py  # McLeod-vs-Praat cents/octave report (Phase 6.3, CLI)
 ```
 
 - Default port `8765`; env `VOCALOUS_SIDECAR_URL`.
@@ -288,7 +336,9 @@ backend/
 | Octave errors on low voices | Octave-fold setting + range calibration from Phase 4 |
 | Mic processing differences | Explicit singing vs laptop presets (Phase 0) |
 | Scope creep | Ship Phase 1 before any backend work |
-| Privacy (FAQ promise) | Keep pitch local by default; sidecar is localhost-only; document when audio is sent to sidecar |
+| Privacy (FAQ promise) | Keep pitch local by default; sidecar is localhost-only; document when audio is sent to sidecar; update FAQ before enabling `/analyze` (Phase 6.4) |
+| Parselmouth analysis feels like "magic numbers" | v1 shows range + intensity + raw formants only; no technique grades until metrics are trustworthy |
+| McLeod vs Praat disagreement on real takes | Use 6.3 harness before changing detectors; only then consider pYIN WASM or CREPE |
 
 ---
 
@@ -300,6 +350,7 @@ backend/
 4. **Sidecar:** health down → UI hides features; `transcribe` on known wav fixture; `isolate` smoke test.
 5. **Regression:** free mode (no melody) still shows live pitch; worker detector options still work.
 6. **A11y/i18n:** new strings in `en-US.json` (+ fi/es placeholders).
+7. **Phase 6:** `/analyze` returns sane JSON on a fixture wav (and `501` without parselmouth); deep-analysis UI hidden when sidecar down; `validate_detector.py` report reproducible on the same fixture; FAQ copy reviewed against actual network behavior.
 
 ---
 
@@ -309,9 +360,11 @@ backend/
 2. **Exercise library size v1?** → Default: 4 drills (scale, siren, hold, intervals).
 3. **Where should history live?** → Default: IndexedDB, no sync.
 4. **Is a always-on localhost sidecar acceptable?** → Default: opt-in via README + “Enable local voice tools” toggle.
+5. **Deep analysis: auto-run after every Stop, or on-demand button?** → Default: on-demand (extra latency + privacy opt-in explicit).
+6. **Show formants to users in v1?** → Default: store in JSON, display raw numbers only; no vowel coaching until a follow-up plan.
 
 ---
 
 ## Deliverable summary
 
-A phased upgrade of Vocalous from “live pitch line + melody overlay” to a **karaoke singing coach**: scored pitch and timing, on-screen lyrics, local optional denoise/ASR for articulation, range/warmup/vibrato tools, and progress history — without giving up the current client-first, privacy-friendly pitch pipeline.
+A phased upgrade of Vocalous from “live pitch line + melody overlay” to a **karaoke singing coach**: scored pitch and timing, on-screen lyrics, local optional denoise/ASR for articulation, range/warmup/vibrato tools, progress history, and (Phase 6) Praat-grade post-session acoustic analysis — without giving up the current client-first, privacy-friendly pitch pipeline.

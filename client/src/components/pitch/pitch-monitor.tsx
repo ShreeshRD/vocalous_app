@@ -1,10 +1,13 @@
 import React from 'react';
 
+import { startSessionAudio, stopSessionAudio } from '../../services/sessionAudio';
+
 interface PitchSetup {
   analyser?: AnalyserNode;
   audioContext?: AudioContext;
   buffer?: Float32Array;
   byteBuffer?: Uint8Array;
+  source?: MediaStreamAudioSourceNode;
 }
 
 interface PitchProps {
@@ -100,12 +103,16 @@ export function PitchMonitor({
     const mediaStreamSource = pitchSetup.audioContext.createMediaStreamSource(
       stream
     );
+    pitchSetup.source = mediaStreamSource;
     pitchSetup.analyser = pitchSetup.audioContext.createAnalyser();
     if (pitchSetup.analyser.getFloatTimeDomainData === undefined) {
       pitchSetup.byteBuffer = new Uint8Array(windowSize);
     }
     pitchSetup.analyser.fftSize = windowSize;
     mediaStreamSource.connect(pitchSetup.analyser);
+
+    // Post-session /analyze buffer (Phase 6) — separate from the pitch path
+    startSessionAudio(pitchSetup.audioContext, mediaStreamSource);
 
     // Reset gate state for a new stream/session
     voicedRunRef.current = 0;
@@ -242,6 +249,8 @@ export function PitchMonitor({
     return () => {
       console.log('Stopping audio monitoring.');
       escape.cancelRender = true;
+      // Session WAV is finalized by PitchComponent.onStop → stopSessionAudio()
+      // so the blob is still readable when the summary opens.
     };
   }, [setupConnection, updatePitch, enabled]);
 
